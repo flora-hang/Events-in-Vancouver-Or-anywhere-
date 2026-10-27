@@ -32,7 +32,7 @@
     <div class="city-picker">
       <button class="btn-outline city-button" id="city-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="city-menu">
         <svg class="i accent" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.3-7-11.5A7 7 0 0 1 19 9.5C19 14.7 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
-        <span id="city-label">Vancouver, BC</span>
+        <span class="city-label" id="city-label">Vancouver, BC</span>
         <svg class="i muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
       </button>
       <div class="popover city-menu" id="city-menu" hidden>
@@ -45,8 +45,12 @@
           Use my current location
         </button>
         <div class="menu-divider"></div>
-        <p class="menu-heading">Cities</p>
-        <ul class="city-list" id="city-list" role="listbox" aria-label="Cities"></ul>
+        <div class="menu-heading-row">
+          <p class="menu-heading">Cities <span class="hint">· choose one or more</span></p>
+          <button type="button" class="link small-link" id="select-all-cities">Select all</button>
+        </div>
+        <ul class="city-list" id="city-list" role="listbox" aria-label="Cities" aria-multiselectable="true"></ul>
+        <button type="button" class="btn-primary menu-done" id="cities-done">Done</button>
       </div>
     </div>
 

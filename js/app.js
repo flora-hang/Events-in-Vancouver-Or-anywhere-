@@ -7,7 +7,7 @@
 (function () {
   "use strict";
 
-  const { TIME_ZONE: TZ, CATEGORIES, CITIES, SAMPLE_EVENTS } = window.HAPPENINGS_DATA;
+  const { TIME_ZONE: TZ, CATEGORIES, CITIES, COMMUNITY_EVENTS } = window.HAPPENINGS_DATA;
   const T = window.HAPPENINGS_TIME;
 
   // ---------------------------------------------------------------- helpers
@@ -45,32 +45,103 @@
   const anchors = T.anchors(now, TZ);
   const cityById = Object.fromEntries(CITIES.map((c) => [c.id, c]));
 
-  const EVENTS = SAMPLE_EVENTS.map((e) => {
-    const day = T.resolveDay(e.day, anchors);
-    const startDate = T.timeOn(day, e.start, TZ);
-    const endDate = T.timeOn(day, e.end, TZ);
+  const LOOKAHEAD_DAYS = 120;
+  const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+  const money = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+  function priceLabelFor(e) {
+    if (e.priceLabel) return e.priceLabel;
+    if (e.price === 0) return "Free";
+    if (typeof e.price === "number") return e.priceMax > e.price ? `From $${money(e.price)}` : `$${money(e.price)}`;
+    return "Tickets";
+  }
+
+  /** Add the display and search fields every event needs. */
+  function finish(e) {
     const city = cityById[e.city];
+    const category = CATEGORIES[e.category] ? e.category : "arts";
     return {
       ...e,
-      startDate,
-      endDate,
+      category,
       cityName: city.name,
-      priceLabel: e.price > 0 ? `$${e.price}` : "Free",
-      // Sample events link to a search for the venue. Real events would carry their own page URL.
-      url: e.url || `https://www.google.com/search?q=${encodeURIComponent(`${e.venue} ${e.area} ${city.name}`)}`,
-      searchText: [e.title, e.venue, e.area, e.address, city.name, CATEGORIES[e.category].label, e.description, ...(e.tags || [])]
+      priceLabel: priceLabelFor(e),
+      searchText: [e.title, e.venue, e.area, e.address, city.name, CATEGORIES[category].label, e.description, ...(e.tags || [])]
         .join(" ").toLowerCase()
     };
-  })
-    .filter((e) => e.endDate > now)
-    .sort((a, b) => a.startDate - b.startDate);
+  }
 
-  const eventById = Object.fromEntries(EVENTS.map((e) => [e.id, e]));
+  /** Turn one community event's schedule into dated listings for the coming months. */
+  function expandCommunity(e) {
+    const { weekly, dates, span, ...base } = e;
+    const today = anchors.today, horizon = T.addDays(today, LOOKAHEAD_DAYS);
+    const out = [];
+    const add = (date, start, end) => out.push({
+      ...base, source: "community", seriesId: e.id, id: `${e.id}@${T.isoDate(date)}`,
+      startDate: T.timeOn(date, start, TZ), endDate: T.timeOn(date, end, TZ)
+    });
+    for (const rule of weekly || []) {
+      const from = T.parseDate(rule.from), until = T.parseDate(rule.until);
+      const days = new Set(rule.days.map((d) => DAY_KEYS.indexOf(d)));
+      const except = new Set(rule.except || []);
+      const stop = T.compareDates(until, horizon) < 0 ? until : horizon;
+      for (let d = T.compareDates(from, today) > 0 ? from : today; T.compareDates(d, stop) <= 0; d = T.addDays(d, 1)) {
+        if (days.has(T.weekdayOf(d)) && !except.has(T.isoDate(d))) add(d, rule.start, rule.end);
+      }
+    }
+    for (const x of dates || []) add(T.parseDate(x.date), x.start, x.end);
+    if (span) {
+      const firstDay = T.parseDate(span.from), lastDay = T.parseDate(span.until);
+      out.push({
+        ...base, source: "community", seriesId: e.id, id: e.id, allDay: true, firstDay, lastDay, hoursNote: span.hours,
+        startDate: T.startOfDay(firstDay, TZ), endDate: T.startOfDay(T.addDays(lastDay, 1), TZ)
+      });
+    }
+    return out;
+  }
+
+  /** One event from data/events.json (the live Ticketmaster feed). */
+  function fromFeed(x) {
+    if (!x || !cityById[x.city] || typeof x.lat !== "number" || typeof x.lng !== "number") return null;
+    if (x.allDay) {
+      const firstDay = T.parseDate(x.date), lastDay = T.parseDate(x.lastDate || x.date);
+      return { ...x, source: "ticketmaster", firstDay, lastDay,
+        startDate: T.startOfDay(firstDay, TZ), endDate: T.startOfDay(T.addDays(lastDay, 1), TZ) };
+    }
+    const startDate = new Date(x.start), endDate = new Date(x.end);
+    if (isNaN(startDate) || isNaN(endDate)) return null;
+    return { ...x, source: "ticketmaster", startDate, endDate };
+  }
+
+  let EVENTS = [];
+  let eventById = {};
+  function setEvents(live) {
+    EVENTS = [...COMMUNITY_EVENTS.flatMap(expandCommunity), ...live]
+      .map(finish)
+      .filter((e) => e.endDate > now)
+      .sort((a, b) => a.startDate - b.startDate);
+    eventById = Object.fromEntries(EVENTS.map((e) => [e.id, e]));
+  }
+  setEvents([]);
+
+  /** Fetch the live feed. Returns [] if it's missing (e.g. when opening index.html directly). */
+  async function loadLiveEvents() {
+    try {
+      const res = await fetch("data/events.json", { cache: "no-cache" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return (data.events || []).map(fromFeed).filter(Boolean);
+    } catch (err) {
+      console.info("Live events not loaded. Community events only.", err.message || err);
+      return [];
+    }
+  }
 
   // ---------------------------------------------------------------- state
-  const savedCity = store.get("happenings:city", "vancouver");
+  // Selected cities (several allowed). Reads the older single-city setting too.
+  const storedCities = store.get("happenings:cities", null) || [store.get("happenings:city", "vancouver")];
+  const startCities = storedCities.filter((id) => cityById[id]);
   const state = {
-    cityId: cityById[savedCity] ? savedCity : "vancouver",
+    cityIds: new Set(startCities.length ? startCities : ["vancouver"]),
     preset: "weekend",          // "today" | "weekend" | "range"
     range: null,                // { from: {y,m,d}, to: {y,m,d} }
     query: "",
@@ -116,7 +187,7 @@
   /** In scope for the current city/date (or saved list), before user filters. */
   function inScope(e) {
     if (state.view === "saved") return saved.has(e.id);
-    if (e.city !== state.cityId) return false;
+    if (!state.cityIds.has(e.city)) return false;
     const w = dateWindow();
     return e.endDate > w.from && e.startDate < w.to;
   }
@@ -124,8 +195,9 @@
   /** In scope and matching search + filters, ignoring the category chips. */
   function matchesExceptCategory(e) {
     if (!inScope(e)) return false;
-    if (state.freeOnly && e.price > 0) return false;
-    if (state.tod.size && !state.tod.has(timeOfDay(e))) return false;
+    if (state.freeOnly && e.price !== 0) return false;
+    // Listings without set hours stay in, since they could match any time of day.
+    if (state.tod.size && !e.allDay && !state.tod.has(timeOfDay(e))) return false;
     if (state.query && !queryMatch(e)) return false;
     return true;
   }
@@ -134,9 +206,11 @@
   const hasUserFilters = () => Boolean(state.query || state.cats.size || state.freeOnly || state.tod.size);
 
   // ---------------------------------------------------------------- map
-  const currentCity = () => cityById[state.cityId];
-  const map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 9, maxZoom: 19 })
-    .setView(currentCity().center, currentCity().zoom);
+  /** Selected cities, in the order they appear in CITIES. */
+  const selectedCities = () => CITIES.filter((c) => state.cityIds.has(c.id));
+  const firstCity = selectedCities()[0];
+  const map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 7, maxZoom: 19 })
+    .setView(firstCity.center, firstCity.zoom);
 
   // Basemap: OpenFreeMap vector tiles (free, no API key), drawn with MapLibre.
   // Falls back to standard OpenStreetMap tiles if the browser can't draw vector maps.
@@ -235,8 +309,13 @@
 
   /** Fit the map to a set of events, keeping them clear of the side panel. */
   function frameEvents(list) {
-    const pts = list.map((e) => [e.lat, e.lng]);
-    if (!pts.length) { map.setView(currentCity().center, currentCity().zoom); return; }
+    const cities = selectedCities();
+    let pts = list.map((e) => [e.lat, e.lng]);
+    if (!pts.length) {
+      // Nothing to show: frame the selected cities instead.
+      if (cities.length === 1) { map.setView(cities[0].center, cities[0].zoom); return; }
+      pts = cities.map((c) => c.center);
+    }
     const narrow = window.matchMedia("(max-width: 900px)").matches;
     const left = narrow ? 32 : $(".panel").offsetWidth + 56;
     map.fitBounds(pts, { paddingTopLeft: [left, 72], paddingBottomRight: [narrow ? 32 : 80, 48], maxZoom: 15 });
@@ -248,7 +327,40 @@
     const img = e.image ? `<img src="${esc(e.image)}" alt="" loading="lazy" onerror="this.remove()">` : "";
     return `<div class="art ${cls}" style="--c:${c.color};--t:${c.tint}"><svg viewBox="0 0 24 24" aria-hidden="true">${c.icon}</svg>${img}</div>`;
   }
-  const whenText = (e) => `${T.shortDay(e.startDate, TZ)} · ${T.timeRange(e.startDate, e.endDate, TZ)}`;
+  const sameDay = (e) => T.compareDates(e.firstDay, e.lastDay) === 0;
+
+  /** Time of an event for display: a range, a start time, or the hours note for all-day listings. */
+  function timeText(e) {
+    if (e.allDay) return e.hoursNote || "Time to be announced";
+    if (e.endEstimated) return `Starts ${T.clock(e.startDate, TZ)}`;
+    return T.timeRange(e.startDate, e.endDate, TZ);
+  }
+  function whenText(e) {
+    if (e.allDay) {
+      const first = T.shortDay(noon(e.firstDay), TZ);
+      return sameDay(e) ? `${first} · ${timeText(e)}` : `${first} – ${T.shortDay(noon(e.lastDay), TZ)} · ${timeText(e)}`;
+    }
+    const time = e.endEstimated ? T.clock(e.startDate, TZ) : T.timeRange(e.startDate, e.endDate, TZ);
+    return `${T.shortDay(e.startDate, TZ)} · ${time}`;
+  }
+  function longWhen(e) {
+    if (e.allDay && !sameDay(e)) return `${T.longDay(noon(e.firstDay), TZ)} – ${T.longDay(noon(e.lastDay), TZ)}`;
+    return T.longDay(e.allDay ? noon(e.firstDay) : e.startDate, TZ);
+  }
+
+  const showCityNames = () => state.view === "saved" || state.cityIds.size > 1;
+  const placeText = (e) => (showCityNames() ? `${e.venue}, ${e.cityName}` : e.venue);
+
+  /** The external link for an event: its ticket page, its official page, else its venue's page. */
+  function eventLink(e) {
+    if (e.source === "ticketmaster" && e.url) return { href: e.url, card: "Tickets & info", drawer: "Get tickets on Ticketmaster" };
+    if (e.url) return { href: e.url, card: "More info", drawer: "Visit event page" };
+    if (e.venueUrl) return { href: e.venueUrl, card: "Venue info", drawer: "Visit venue website" };
+    return null;
+  }
+  const sourceNote = (e) => (e.source === "ticketmaster"
+    ? "Live listing from Ticketmaster, refreshed hourly."
+    : "Community event · details checked against the organizer's page.");
   const heartBtn = (e) => `<button type="button" class="heart-btn" data-save="${e.id}" aria-pressed="${saved.has(e.id)}" aria-label="${saved.has(e.id) ? "Remove" : "Save"} ${esc(e.title)}">${icon("heart")}</button>`;
 
   // ---------------------------------------------------------------- hover card
@@ -274,6 +386,11 @@
 
   function showCard(e, latlng) {
     const c = CATEGORIES[e.category];
+    const link = eventLink(e);
+    // With no official page, "See details" opens the details panel instead.
+    const moreInfo = link
+      ? `<a class="link" href="${esc(link.href)}" target="_blank" rel="noopener">${link.card} ${icon("arrow")}</a>`
+      : `<button type="button" class="link" data-details="${e.id}">See details ${icon("arrow")}</button>`;
     cardEventId = e.id;
     card.style.setProperty("--c", c.color);
     card.setAttribute("aria-label", `Preview: ${e.title}`);
@@ -287,9 +404,9 @@
       <div class="body">
         <h2>${esc(e.title)}</h2>
         <div class="line">${icon("clock")}${esc(whenText(e))}</div>
-        <div class="line muted">${icon("pin")}${esc(e.venue)}, ${esc(e.area)}</div>
+        <div class="line muted">${icon("pin")}${esc(e.venue)}${e.area && e.area !== e.venue ? `, ${esc(e.area)}` : ""}</div>
         <div class="card-actions">
-          <a class="link" href="${esc(e.url)}" target="_blank" rel="noopener">More info ${icon("arrow")}</a>
+          ${moreInfo}
           <button type="button" class="link quiet" data-calendar="${e.id}">${icon("cal")}Add to calendar</button>
         </div>
       </div>`;
@@ -319,6 +436,8 @@
   card.addEventListener("click", (ev) => {
     const cal = ev.target.closest("[data-calendar]");
     if (cal) openDrawer(cal.dataset.calendar, { calendar: true });
+    const details = ev.target.closest("[data-details]");
+    if (details) openDrawer(details.dataset.details);
   });
   map.on("movestart zoomstart", hideCard);
   window.addEventListener("scroll", hideCard, { passive: true });
@@ -365,6 +484,13 @@
     else show();
   }
 
+  function drawerLink(e) {
+    const link = eventLink(e);
+    const note = `<p class="link-note">${esc(sourceNote(e))}</p>`;
+    if (!link) return note;
+    return `<a class="link" href="${esc(link.href)}" target="_blank" rel="noopener">${link.drawer} ${icon("external")}</a>${note}`;
+  }
+
   function renderDrawer(e, calendarOpen) {
     const c = CATEGORIES[e.category];
     drawer.style.setProperty("--c", c.color);
@@ -377,12 +503,12 @@
       <div class="content">
         <h2 id="drawer-title">${esc(e.title)}</h2>
         <div class="facts">
-          <div class="line">${icon("cal")}${esc(T.longDay(e.startDate, TZ))}</div>
-          <div class="line">${icon("clock")}${esc(T.timeRange(e.startDate, e.endDate, TZ))}</div>
+          <div class="line">${icon("cal")}${esc(longWhen(e))}</div>
+          <div class="line">${icon("clock")}${esc(timeText(e))}</div>
           <div class="line">${icon("pin")}${esc(e.venue)}, ${esc(e.address)}, ${esc(e.cityName)}</div>
           <div class="line">${icon("ticket")}${esc(e.priceLabel)}</div>
         </div>
-        <p class="desc">${esc(e.description)}</p>
+        ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ""}
         <div class="actions">
           <button type="button" class="btn-save" data-save="${e.id}" aria-pressed="${saved.has(e.id)}">
             ${icon("heart")}<span>${saved.has(e.id) ? "Saved" : "Save"}</span>
@@ -403,7 +529,7 @@
             </div>
           </div>
         </div>
-        <a class="link" href="${esc(e.url)}" target="_blank" rel="noopener">Visit event page ${icon("external")}</a>
+        ${drawerLink(e)}
       </div>`;
     $(".close-btn", drawer).addEventListener("click", closeDrawer);
     const calBtn = $("#cal-button", drawer), calMenu = $("#cal-menu", drawer);
@@ -461,7 +587,8 @@
   }, true);
 
   function renderSavedCount() {
-    $("#saved-count").textContent = saved.size;
+    // Count only saved events that are still listed (past or removed ones drop off).
+    $("#saved-count").textContent = [...saved].filter((id) => eventById[id]).length;
   }
 
   function setView(view) {
@@ -507,8 +634,10 @@
     });
   }
   document.addEventListener("click", (ev) => {
+    // Use the click's original path: the clicked element may have been redrawn by now.
+    const path = ev.composedPath();
     openPopovers.forEach((p) => {
-      if (!p.pop.contains(ev.target) && !p.button.contains(ev.target)) togglePopover(p.button, p.pop, false);
+      if (!path.includes(p.pop) && !path.includes(p.button)) togglePopover(p.button, p.pop, false);
     });
   });
   document.addEventListener("keydown", (ev) => {
@@ -532,20 +661,40 @@
       .map((c) => {
         const n = EVENTS.filter((e) => e.city === c.id && e.endDate > w.from && e.startDate < w.to).length;
         const when = state.preset === "today" ? "today" : state.preset === "weekend" ? "this weekend" : "in these dates";
-        return `<li><button type="button" class="city-option" role="option" data-city="${c.id}" aria-selected="${c.id === state.cityId}">
-          <span class="pin-box">${icon("pin")}</span>
+        const on = state.cityIds.has(c.id);
+        const last = on && state.cityIds.size === 1;
+        return `<li><button type="button" class="city-option" role="option" data-city="${c.id}" aria-selected="${on}"
+            ${last ? 'aria-disabled="true" title="Keep at least one city selected"' : ""}>
+          <span class="checkbox" aria-hidden="true">${icon("check")}</span>
           <span class="names"><strong>${esc(c.name)}, ${esc(c.region)}</strong><small>${plural(n, "event")} ${when}</small></span>
-          <span class="check-mark">${icon("check")}</span></button></li>`;
+          </button></li>`;
       }).join("") || `<li class="empty"><span>No matching city yet.</span></li>`;
+    const all = state.cityIds.size === CITIES.length;
+    $("#select-all-cities").textContent = all ? "Only Vancouver" : "Select all";
   }
 
-  function setCity(id, { recenter = true } = {}) {
-    if (!cityById[id]) return;
-    state.cityId = id;
-    store.set("happenings:city", id);
+  /** Replace the selected cities. */
+  function setCities(ids, { recenter = true } = {}) {
+    const valid = ids.filter((id) => cityById[id]);
+    if (!valid.length) return;
+    state.cityIds = new Set(valid);
+    store.set("happenings:cities", [...state.cityIds]);
     if (state.view === "saved") { state.view = "all"; $("#saved-button").setAttribute("aria-pressed", "false"); }
     const list = render();
     if (recenter) frameEvents(list);
+    if (!cityMenu.hidden) renderCityList();
+  }
+
+  /** Add or remove one city. At least one stays selected. */
+  function toggleCity(id) {
+    const next = new Set(state.cityIds);
+    if (next.has(id)) {
+      if (next.size === 1) return;
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setCities([...next]);
   }
 
   cityButton.addEventListener("click", () => { renderCityList(); togglePopover(cityButton, cityMenu); });
@@ -553,10 +702,16 @@
   $("#city-list").addEventListener("click", (ev) => {
     const opt = ev.target.closest("[data-city]");
     if (!opt) return;
-    togglePopover(cityButton, cityMenu, false);
-    setCity(opt.dataset.city);
-    cityButton.focus();
+    const id = opt.dataset.city;
+    toggleCity(id);   // the menu stays open so several cities can be picked
+    const again = $(`#city-list [data-city="${id}"]`);
+    if (again) again.focus();
   });
+  $("#select-all-cities").addEventListener("click", () => {
+    const all = state.cityIds.size === CITIES.length;
+    setCities(all ? ["vancouver"] : CITIES.map((c) => c.id));
+  });
+  $("#cities-done").addEventListener("click", () => { togglePopover(cityButton, cityMenu, false); cityButton.focus(); });
 
   // ---------------------------------------------------------------- location
   function distanceKm([a1, o1], [a2, o2]) {
@@ -576,7 +731,8 @@
         showToast("Happenings doesn't cover your area yet. Showing where you are.");
         return;
       }
-      if (chooseCity || nearest.c.id !== state.cityId) setCity(nearest.c.id, { recenter: false });
+      if (chooseCity) setCities([nearest.c.id], { recenter: false });
+      else if (!state.cityIds.has(nearest.c.id)) setCities([...state.cityIds, nearest.c.id], { recenter: false });
       map.setView(here, 14);
     }, () => {
       showToast("Couldn't get your location. Check the location permission for this site.");
@@ -683,7 +839,7 @@
     }
     listEl.innerHTML = list.map((e) => {
       const c = CATEGORIES[e.category];
-      const place = state.view === "saved" && e.city !== state.cityId ? `${e.area}, ${e.cityName}` : e.area;
+      const place = placeText(e);
       const active = e.id === state.selectedId || e.id === state.hotId;
       return `<li class="event-row${active ? " is-active" : ""}" data-id="${e.id}" style="--c:${c.color}">
         ${art(e, "thumb")}
@@ -737,15 +893,24 @@
     clusters.addLayers(list.map(markerFor));
   }
 
+  function cityButtonLabel(cities) {
+    if (cities.length === CITIES.length) return "All cities";
+    if (cities.length === 1) return `${cities[0].name}, ${cities[0].region}`;
+    if (cities.length === 2) return `${cities[0].name} + ${cities[1].name}`;
+    return `${cities[0].name} + ${cities.length - 1} more`;
+  }
+
   function render() {
     const base = EVENTS.filter(matchesExceptCategory);
     const list = base.filter((e) => state.cats.size === 0 || state.cats.has(e.category));
 
-    $("#city-label").textContent = `${currentCity().name}, ${currentCity().region}`;
+    const cities = selectedCities();
+    $("#city-label").textContent = cityButtonLabel(cities);
+    cityButton.setAttribute("aria-label", `Cities: ${cities.map((c) => c.name).join(", ")}`);
     $("#panel-title").textContent = state.view === "saved" ? "Saved events" : plural(list.length, "event");
     $("#panel-sub").textContent = state.view === "saved"
       ? (saved.size ? `${plural(list.length, "saved event")} · all cities and dates` : "Your saved events appear here")
-      : dateWindowLabel();
+      : dateWindowLabel() + (cities.length > 1 ? ` · ${cities.length} cities` : "");
     $("#filters-dot").hidden = !(state.freeOnly || state.tod.size);
     pickDates.textContent = state.preset === "range" && state.range ? dateWindowLabel() : "Pick dates";
 
@@ -758,6 +923,21 @@
   }
 
   // ---------------------------------------------------------------- go
+  // Show community events straight away, then add the live feed when it arrives.
+  let userMovedMap = false;
+  map.on("dragstart", () => { userMovedMap = true; });
+  map.getContainer().addEventListener("wheel", () => { userMovedMap = true; }, { passive: true });
+  ["zoom-in", "zoom-out", "locate"].forEach((id) => $(`#${id}`).addEventListener("click", () => { userMovedMap = true; }));
+
   frameEvents(render());
-  window.HAPPENINGS_APP = { state, map, events: EVENTS, render }; // handy for debugging in the console
+  const liveReady = loadLiveEvents().then((live) => {
+    if (!live.length) return;
+    setEvents(live);
+    const list = render();
+    if (!userMovedMap) frameEvents(list);
+    map.attributionControl.addAttribution('Events: <a href="https://www.ticketmaster.ca" target="_blank" rel="noopener">Ticketmaster</a>');
+  });
+
+  // Handy for debugging in the browser console.
+  window.HAPPENINGS_APP = { state, map, render, liveReady, get events() { return EVENTS; } };
 })();

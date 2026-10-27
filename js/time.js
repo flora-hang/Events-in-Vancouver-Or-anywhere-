@@ -83,6 +83,12 @@ window.HAPPENINGS_TIME = (function () {
 
   /** "YYYY-MM-DD" for a calendar date. */
   const isoDate = ({ y, m, d }) => `${y}-${pad(m)}-${pad(d)}`;
+  /** "YYYY-MM-DD" → {y, m, d}. */
+  const parseDate = (s) => { const [y, m, d] = String(s).split("-").map(Number); return { y, m, d }; };
+  /** Day of week of a calendar date: 0 = Sunday … 6 = Saturday. */
+  const weekdayOf = ({ y, m, d }) => new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  /** Compare calendar dates: negative, 0 or positive. */
+  const compareDates = (a, b) => (a.y - b.y) || (a.m - b.m) || (a.d - b.d);
 
   // ---------- display formatting ----------
   const fmtCache = {};
@@ -103,14 +109,21 @@ window.HAPPENINGS_TIME = (function () {
   }
 
   // ---------- calendar export ----------
+  // Timed events use exact UTC instants. All-day events (ev.allDay) use the local
+  // dates ev.firstDay and ev.lastDay (inclusive), so they don't shift between time zones.
   const utcStamp = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const compactDate = (date) => isoDate(date).replace(/-/g, "");
+  const details = (ev) => [ev.description, ev.url].filter(Boolean).join("\n\n");
 
   function googleCalendarUrl(ev) {
+    const dates = ev.allDay
+      ? `${compactDate(ev.firstDay)}/${compactDate(addDays(ev.lastDay, 1))}`
+      : `${utcStamp(ev.startDate)}/${utcStamp(ev.endDate)}`;
     const params = new URLSearchParams({
       action: "TEMPLATE",
       text: ev.title,
-      dates: `${utcStamp(ev.startDate)}/${utcStamp(ev.endDate)}`,
-      details: `${ev.description}\n\n${ev.url}`,
+      dates,
+      details: details(ev),
       location: `${ev.venue}, ${ev.address}`
     });
     return `https://calendar.google.com/calendar/render?${params}`;
@@ -121,11 +134,12 @@ window.HAPPENINGS_TIME = (function () {
       path: "/calendar/action/compose",
       rru: "addevent",
       subject: ev.title,
-      startdt: ev.startDate.toISOString(),
-      enddt: ev.endDate.toISOString(),
-      body: `${ev.description}\n\n${ev.url}`,
+      startdt: ev.allDay ? isoDate(ev.firstDay) : ev.startDate.toISOString(),
+      enddt: ev.allDay ? isoDate(addDays(ev.lastDay, 1)) : ev.endDate.toISOString(),
+      body: details(ev),
       location: `${ev.venue}, ${ev.address}`
     });
+    if (ev.allDay) params.set("allday", "true");
     return `https://outlook.live.com/calendar/0/deeplink/compose?${params}`;
   }
 
@@ -153,12 +167,13 @@ window.HAPPENINGS_TIME = (function () {
       "BEGIN:VEVENT",
       `UID:${ev.id}-${utcStamp(ev.startDate)}@happenings.app`,
       `DTSTAMP:${utcStamp(now)}`,
-      `DTSTART:${utcStamp(ev.startDate)}`,
-      `DTEND:${utcStamp(ev.endDate)}`,
+      ...(ev.allDay
+        ? [`DTSTART;VALUE=DATE:${compactDate(ev.firstDay)}`, `DTEND;VALUE=DATE:${compactDate(addDays(ev.lastDay, 1))}`]
+        : [`DTSTART:${utcStamp(ev.startDate)}`, `DTEND:${utcStamp(ev.endDate)}`]),
       `SUMMARY:${icsEscape(ev.title)}`,
       `LOCATION:${icsEscape(`${ev.venue}, ${ev.address}`)}`,
-      `DESCRIPTION:${icsEscape(ev.description)}`,
-      `URL:${ev.url}`,
+      `DESCRIPTION:${icsEscape(ev.description || "")}`,
+      ...(ev.url ? [`URL:${ev.url}`] : []),
       `GEO:${ev.lat};${ev.lng}`,
       "END:VEVENT", "END:VCALENDAR"
     ];
@@ -167,6 +182,7 @@ window.HAPPENINGS_TIME = (function () {
 
   return {
     partsInZone, zonedToDate, addDays, anchors, resolveDay, timeOn, startOfDay, isoDate,
+    parseDate, weekdayOf, compareDates,
     shortDay, longDay, clock, timeRange, googleCalendarUrl, outlookCalendarUrl, icsFile, utcStamp
   };
 })();

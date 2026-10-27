@@ -2,15 +2,18 @@
 
 A map-first event finder for Vancouver. See what's on around you, preview any event by hovering over its pin, filter and search, then save it and add it to your calendar.
 
+All events are real. Live concerts, sports and shows come from Ticketmaster and refresh every hour. Free community events, like farmers markets and festivals, are checked against their organizers' pages.
+
 Designed in Pixso, built with plain HTML, CSS and JavaScript (no build step).
 
 ## Features
 
 - **Real, interactive map.** Streets, parks and water from OpenStreetMap. Drag, scroll or pinch to zoom; nearby pins group into numbered clusters.
-- **Hover previews.** Hovering a pin (or tabbing to it with the keyboard) shows a card with a picture, the event name, time, place, price, a "More info" link and a save button.
-- **Filter and search.** Category chips with live counts, keyword search across titles, venues, neighbourhoods and tags, plus "Free only" and time-of-day filters. An on-map bar shows active filters with one-click removal.
+- **Real events, kept current.** A GitHub Actions job fetches upcoming events from the Ticketmaster Discovery API every hour and republishes the site.
+- **Hover previews.** Hovering a pin (or tabbing to it with the keyboard) shows a card with a picture, the event name, time, place, price, a link to tickets or the event page, and a save button.
+- **Filter and search.** Category chips with live counts, keyword search across titles, venues, performers and tags, plus "Free only" and time-of-day filters. An on-map bar shows active filters with one-click removal.
 - **Dates.** Today, This weekend, or any date range.
-- **Any city.** Switch between Vancouver, North Vancouver, Burnaby, Richmond, Surrey and Victoria, or use your current location.
+- **One city or several.** Pick any mix of Vancouver, North Vancouver, Burnaby, Richmond, Surrey and Victoria, or use your current location.
 - **Save events.** Saved events persist in the browser and have their own view.
 - **Add to calendar.** Google Calendar, Outlook, Apple Calendar or a downloadable `.ics` file, with correct Vancouver times wherever the visitor is.
 - **Works on phones.** The list moves under the map and details open full screen.
@@ -20,9 +23,9 @@ Designed in Pixso, built with plain HTML, CSS and JavaScript (no build step).
 
 You need an internet connection (the map and fonts load from the web).
 
-**Simplest:** unzip the folder and double-click `index.html`. It opens in your browser.
+**Simplest:** unzip the folder and double-click `index.html`. You'll see the community events. Live events only load when the site is served (online, or with the local server below), because browsers block reading `data/events.json` from a double-clicked file.
 
-**With a local server** (closer to how it runs online):
+**With a local server:**
 
 ```bash
 cd happenings
@@ -30,100 +33,123 @@ python3 -m http.server 8000      # or: npx serve
 # then open http://localhost:8000
 ```
 
-> Open the page in Chrome, Safari, Firefox or Edge. Previews inside other apps may block the map.
+To fill in live events locally, run the feed once with your key (see below):
 
-## Put it online (GitHub Pages)
+```bash
+TICKETMASTER_API_KEY=your_key node scripts/fetch-events.mjs
+```
 
-1. Create a new public repository on GitHub and upload the contents of this folder.
-2. In the repository, go to **Settings → Pages**.
-3. Under **Build and deployment**, choose **Deploy from a branch**, pick `main` and `/ (root)`, then **Save**.
-4. After a minute your site is live at `https://<your-username>.github.io/<repo-name>/`.
+## Put it online with live events (GitHub Pages)
 
-Netlify and Vercel also work: drag the folder onto Netlify's dashboard, or import the repo in Vercel.
+You'll need a free Ticketmaster developer key. The key stays private in GitHub; it never appears in the website.
+
+### 1. Get a Ticketmaster API key
+
+1. Go to [developer.ticketmaster.com](https://developer.ticketmaster.com/products-and-docs/apis/getting-started/) and register (or log in).
+2. Open **My Apps**. Your default app shows a **Consumer Key**. That's your API key.
+
+Every key includes 5,000 requests a day. The hourly update uses roughly 150–300.
+
+### 2. Upload the project
+
+Upload everything in this folder to your repository: `index.html`, `README.md`, and the `css`, `js`, `data` and `scripts` folders.
+
+The update job lives in a hidden folder, `.github`, which file browsers usually don't show. The easiest way to add it:
+
+1. In your repository, click **Add file → Create new file**.
+2. Type the name `.github/workflows/update-events.yml` (the slashes create the folders).
+3. Paste in the contents of that file from this project and click **Commit changes**.
+
+### 3. Add the key as a secret
+
+1. In the repository, go to **Settings → Secrets and variables → Actions**.
+2. Click **New repository secret**.
+3. Name: `TICKETMASTER_API_KEY`. Secret: your Consumer Key. Click **Add secret**.
+
+### 4. Let the job publish the site
+
+1. Go to **Settings → Pages**.
+2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+
+### 5. Run it once
+
+1. Open the **Actions** tab and choose **Update events and deploy**.
+2. Click **Run workflow**. After a minute or two it shows a green check, and your site has live events.
+
+From then on it runs every hour on its own, and again whenever you push changes.
+
+**Good to know**
+
+- If Ticketmaster can't be reached, that hour's run stops before publishing, so the site keeps its last good list.
+- GitHub pauses scheduled jobs in public repositories after 60 days with no commits. You'll get an email; re-enable it from the **Actions** tab.
+- GitHub may start scheduled runs a few minutes late at busy times.
 
 ## Project structure
 
 ```
 happenings/
-├── index.html        Page structure: top bar, map, list panel, details drawer
-├── css/styles.css    All styles. Design tokens (colours, fonts, radii) are at the top
-├── js/data.js        Cities, categories and sample events
-├── js/time.js        Time-zone handling, date formatting, calendar links and .ics files
-└── js/app.js         Map, pins, hover card, filters, search, saving, drawer
+├── index.html                          Page structure: top bar, map, list panel, details drawer
+├── css/styles.css                      All styles. Design tokens are at the top
+├── js/data.js                          Cities, categories and community events
+├── js/time.js                          Time zones, date formatting, calendar links and .ics files
+├── js/app.js                           Map, pins, hover card, filters, search, saving, drawer
+├── data/events.json                    Live events (written by the feed script)
+├── scripts/fetch-events.mjs            Fetches live events from Ticketmaster
+└── .github/workflows/update-events.yml Runs the feed hourly and publishes the site
 ```
 
 ### How it works
 
-1. `data.js` provides events with a relative day (`"fri"`, `"sat"`, `"today"`…) and local times, so the demo always shows upcoming events.
-2. `time.js` turns those into exact start and end times in `America/Vancouver`.
-3. `app.js` keeps a single `state` object (city, dates, search, categories, filters, view). Every change calls `render()`, which filters the events once and updates the list, the category counts, the filter bar and the map pins together.
-4. Saved event IDs and the chosen city are stored in `localStorage`.
+1. **Live events.** `scripts/fetch-events.mjs` searches Ticketmaster around each city for the next 60 days. It maps each event to a category, drops cancelled or postponed shows and venues outside the covered cities, removes duplicate listings, and writes `data/events.json`. The GitHub Actions workflow runs it hourly and publishes the result.
+2. **Community events.** `js/data.js` stores them as schedules (for example "Saturdays 10 AM–2 PM from Nov 7 to Mar 27, except Dec 26"), and the app turns those into dated listings.
+3. **Display.** `app.js` shows community events right away, then adds the live feed when it loads. Every change of city, date, search or filter calls `render()`, which updates the list, category counts, filter bar and map pins together.
+4. **Honest details.** When Ticketmaster gives no end time, the app shows only the start time. When it gives no price, the app says "Tickets" rather than guessing. A $0 price from Ticketmaster usually means unpublished, so live events are never labelled free.
 
-## Customize
+## Add or update community events
 
-**Add an event** – copy an entry in `SAMPLE_EVENTS` in `js/data.js`:
+Community events are in `COMMUNITY_EVENTS` in `js/data.js`. Each one should link to its official page, and its schedule should match that page.
 
 ```js
-{ id: "my-event", title: "Night Market", category: "food", city: "vancouver",
+{ id: "my-market", title: "Night Market", category: "markets", city: "vancouver",
   venue: "Venue name", address: "123 Main St", area: "Neighbourhood",
-  lat: 49.28, lng: -123.12, day: "sat", start: "18:00", end: "22:00", price: 0,
+  lat: 49.28, lng: -123.12, price: 0,                 // 0 = free; or a number; or null + priceLabel: "Tickets"
+  url: "https://official-event-page",
   description: "What to expect.", tags: ["market", "street food"],
-  url: "https://link-to-the-event-page", image: "images/night-market.jpg" }
+  image: "images/night-market.jpg",                    // optional
+
+  // Use one of these schedule styles:
+  weekly: [{ from: "2026-11-07", until: "2027-03-27", days: ["sat"], start: "10:00", end: "14:00",
+             except: ["2026-12-26"] }],
+  // dates: [{ date: "2026-11-21", start: "12:00", end: "20:00" }],
+  // span:  { from: "2026-11-16", until: "2026-12-24", hours: "Hours vary by day" }
+}
 ```
 
-- `day` can be `"today"`, `"tomorrow"`, `"fri"`, `"sat"`, `"sun"` or a date like `"2026-11-14"`.
-- Times past midnight are written as `"25:30"` (1:30 AM the next day).
-- `image` is optional. Without it, the event shows illustrated art in its category colour.
-- `url` is optional. Without it, "More info" searches for the venue.
+- Times are Vancouver time. Write times past midnight as `"25:30"` (1:30 AM the next day).
+- Category ids: `music`, `arts`, `sports`, `food`, `markets`, `family`, `outdoors`.
+- When a new season is announced, update the dates. Past dates drop off automatically.
 
-**Add a city** – add an entry to `CITIES` with its centre coordinates and zoom level.
+**Add a city** – add an entry to `CITIES` in `js/data.js` with its centre, zoom level and search radius. The live feed picks it up on its next run.
 
 **Change the look** – edit the variables at the top of `css/styles.css`. Category colours live in `CATEGORIES` in `data.js`.
-
-## Use real event data
-
-The sample events can be replaced with a live source such as the [Ticketmaster Discovery API](https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/) or Eventbrite. Each event needs the fields above with real `start` and `end` times.
-
-A sketch of the change in `app.js`:
-
-```js
-// Instead of building EVENTS from SAMPLE_EVENTS:
-const res = await fetch("/api/events?city=vancouver");   // your own small server function
-const raw = await res.json();
-const EVENTS = raw.map((e) => ({
-  id: e.id,
-  title: e.name,
-  category: mapCategory(e.classification),     // your mapping to music/food/arts/…
-  city: "vancouver",
-  venue: e.venue.name, address: e.venue.address, area: e.venue.neighbourhood,
-  lat: e.venue.lat, lng: e.venue.lng,
-  startDate: new Date(e.start), endDate: new Date(e.end),
-  price: e.minPrice || 0, priceLabel: e.minPrice ? `$${e.minPrice}` : "Free",
-  description: e.description, url: e.url, image: e.image,
-  cityName: "Vancouver",
-  searchText: `${e.name} ${e.venue.name} ${e.description}`.toLowerCase()
-}));
-```
-
-Keep API keys on a server (for example a Netlify or Vercel function) rather than in the page, since anything in the browser is public.
 
 ## Map tiles
 
 The map uses [OpenFreeMap](https://openfreemap.org): free OpenStreetMap-based map tiles with no API key or sign-up. MapLibre draws them inside Leaflet. If a browser can't draw vector maps (no WebGL), the app falls back to standard OpenStreetMap tiles automatically.
 
-To change the map style, edit the `style` URL in `app.js`. OpenFreeMap also offers `.../styles/positron` (very light, grey) and `.../styles/bright`. For a high-traffic production site you can switch to a provider with an account, such as Mapbox, MapTiler or Google Maps. Keep the attribution in the bottom corner either way.
+To change the map style, edit the `style` URL in `app.js`. OpenFreeMap also offers `.../styles/positron` (very light, grey) and `.../styles/bright`.
 
 ## Built with
 
 - [Leaflet](https://leafletjs.com) and [Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster) for the map
 - [MapLibre GL](https://maplibre.org) and [maplibre-gl-leaflet](https://github.com/maplibre/maplibre-gl-leaflet)
 - Map tiles from [OpenFreeMap](https://openfreemap.org), map data © OpenStreetMap contributors
+- Live event data from the [Ticketmaster Discovery API](https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/)
+- GitHub Actions and GitHub Pages for hourly updates and hosting
 - Fonts: Outfit and Manrope (Google Fonts)
 
 ## Process
 
 <!-- Edit this section in your own words for your application. -->
 - **Design:** Pixso. Cover, explore, filter and save/calendar screens. *(Add a link to your Pixso file.)*
-- **AI-assisted:** I used Claude to help turn the design into code and to explain the build. *(Describe what you directed, what you changed and what you learned.)*
-
-The events in this demo are sample content at real Vancouver locations.
+- **AI-assisted:** I used Claude to help turn the design into code, connect a live data source and explain the build. *(Describe what you directed, what you changed and what you learned.)*
