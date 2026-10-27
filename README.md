@@ -109,12 +109,15 @@ Keep API keys on a server (for example a Netlify or Vercel function) rather than
 
 ## Map tiles
 
-The map uses CARTO's free "Voyager" basemap with OpenStreetMap data, which is fine for a portfolio or demo. For a production site with real traffic, switch to a provider with an account and key (Mapbox, MapTiler, Stadia Maps or Google Maps) by changing the `L.tileLayer(...)` URL in `app.js`, and keep the attribution.
+The map uses [OpenFreeMap](https://openfreemap.org): free OpenStreetMap-based map tiles with no API key or sign-up. MapLibre draws them inside Leaflet. If a browser can't draw vector maps (no WebGL), the app falls back to standard OpenStreetMap tiles automatically.
+
+To change the map style, edit the `style` URL in `app.js`. OpenFreeMap also offers `.../styles/positron` (very light, grey) and `.../styles/bright`. For a high-traffic production site you can switch to a provider with an account, such as Mapbox, MapTiler or Google Maps. Keep the attribution in the bottom corner either way.
 
 ## Built with
 
 - [Leaflet](https://leafletjs.com) and [Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster) for the map
-- Map data © OpenStreetMap contributors, tiles © CARTO
+- [MapLibre GL](https://maplibre.org) and [maplibre-gl-leaflet](https://github.com/maplibre/maplibre-gl-leaflet)
+- Map tiles from [OpenFreeMap](https://openfreemap.org), map data © OpenStreetMap contributors
 - Fonts: Outfit and Manrope (Google Fonts)
 
 ## Process

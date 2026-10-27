@@ -135,15 +135,32 @@
 
   // ---------------------------------------------------------------- map
   const currentCity = () => cityById[state.cityId];
-  const map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 9 })
+  const map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 9, maxZoom: 19 })
     .setView(currentCity().center, currentCity().zoom);
 
-  // Light basemap from CARTO (OpenStreetMap data). See README for production tile options.
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
-    maxZoom: 20,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-  }).addTo(map);
+  // Basemap: OpenFreeMap vector tiles (free, no API key), drawn with MapLibre.
+  // Falls back to standard OpenStreetMap tiles if the browser can't draw vector maps.
+  const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  function supportsWebGL() {
+    try { const c = document.createElement("canvas"); return Boolean(c.getContext("webgl2") || c.getContext("webgl")); }
+    catch { return false; }
+  }
+  function addRasterBasemap() {
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: OSM_ATTRIBUTION }).addTo(map);
+  }
+  if (L.maplibreGL && window.maplibregl && supportsWebGL()) {
+    try {
+      L.maplibreGL({
+        style: "https://tiles.openfreemap.org/styles/liberty",
+        attribution: `<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> ${OSM_ATTRIBUTION}`
+      }).addTo(map);
+    } catch (err) {
+      console.warn("Vector map unavailable, using raster tiles.", err);
+      addRasterBasemap();
+    }
+  } else {
+    addRasterBasemap();
+  }
 
   const clusters = L.markerClusterGroup({
     showCoverageOnHover: false,
