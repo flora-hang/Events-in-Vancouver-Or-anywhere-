@@ -1,0 +1,59 @@
+# Fetches live events every hour and publishes the site to GitHub Pages.
+#
+# Setup (once):
+#   1. Settings → Secrets and variables → Actions → New repository secret
+#      Name: TICKETMASTER_API_KEY   Value: your Ticketmaster "Consumer Key"
+#   2. Settings → Pages → Build and deployment → Source: GitHub Actions
+#
+# It also runs whenever you push changes, and you can run it by hand from the
+# Actions tab ("Run workflow"). If the event fetch fails, nothing is deployed,
+# so the live site keeps its last good version.
+
+name: Update events and deploy
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # every hour at :17 (UTC); GitHub may start it a few minutes late
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Fetch live events from Ticketmaster
+        run: node scripts/fetch-events.mjs
+        env:
+          TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
