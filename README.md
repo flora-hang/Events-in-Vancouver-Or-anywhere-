@@ -150,6 +150,10 @@ To change the map style, edit the `style` URL in `app.js`. OpenFreeMap also offe
 
 ## Process
 
-<!-- Edit this section in your own words for your application. -->
-- **Design:** Pixso. Cover, explore, filter and save/calendar screens. *(Add a link to your Pixso file.)*
-- **AI-assisted:** I used Claude to help turn the design into code, connect a live data source and explain the build. *(Describe what you directed, what you changed and what you learned.)*
+I wanted a map of everything happening in Vancouver, with an interface that met my own design standards.
+
+- **Design.** I designed the screens in Pixso, a UI design platform, and connected it to Claude through Pixso's MCP integration, so the AI could work directly in my design file.
+- **Building the interface.** I described what I wanted: a map based on the real city, events shown as pins, and an information card that pops up when you hover over a pin. I started with placeholder events so I could see the effect and test how the page worked before connecting any data.
+- **Connecting real data.** Next I switched to real events. Following Claude's suggestion, I combined two sources: the Ticketmaster API for concerts, sports and shows, refreshed every hour, and web research for free local activities like farmers markets and festivals.
+- **Refining.** While testing, I added features such as selecting several cities at once, and I set the visual direction, including the colour theme and a light, bright feel suited to browsing events. I also caught that event links went to a Google search instead of the event's own page, and had them fixed.
+- **Publishing.** The site is hosted on GitHub Pages, and a GitHub Actions job updates the events every hour.
