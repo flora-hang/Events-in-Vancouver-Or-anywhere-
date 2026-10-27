@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Happenings – Find things to do in Vancouver</title>
+  <meta name="description" content="A map-first event finder. See what's happening around you, preview it, save it and add it to your calendar.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2317161F'/%3E%3Cpath d='M16 25s-6-5.4-6-9.9a6 6 0 0 1 12 0C22 19.6 16 25 16 25z' fill='none' stroke='%23FFD166' stroke-width='2.4'/%3E%3Ccircle cx='16' cy='15' r='2' fill='%23FFD166'/%3E%3C/svg%3E">
+
+  <!-- Map library (Leaflet) and pin clustering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Manrope:wght@500;600;700;800&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#event-list">Skip to event list</a>
+
+  <!-- ============ Top bar ============ -->
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Happenings home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 21s-7-6.3-7-11.5A7 7 0 0 1 19 9.5C19 14.7 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+      </span>
+      <span class="brand-name">happenings</span>
+    </a>
+
+    <div class="city-picker">
+      <button class="btn-outline city-button" id="city-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="city-menu">
+        <svg class="i accent" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.3-7-11.5A7 7 0 0 1 19 9.5C19 14.7 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+        <span id="city-label">Vancouver, BC</span>
+        <svg class="i muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="popover city-menu" id="city-menu" hidden>
+        <label class="field">
+          <svg class="i muted" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="city-search" type="search" placeholder="Search a city" autocomplete="off" aria-label="Search a city">
+        </label>
+        <button class="menu-action" id="use-location" type="button">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>
+          Use my current location
+        </button>
+        <div class="menu-divider"></div>
+        <p class="menu-heading">Cities</p>
+        <ul class="city-list" id="city-list" role="listbox" aria-label="Cities"></ul>
+      </div>
+    </div>
+
+    <label class="field search">
+      <svg class="i muted" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Search events, venues or artists" autocomplete="off" aria-label="Search events">
+    </label>
+
+    <div class="date-presets" role="group" aria-label="When">
+      <button type="button" class="seg" data-preset="today" aria-pressed="false">Today</button>
+      <button type="button" class="seg" data-preset="weekend" aria-pressed="true">This weekend</button>
+      <div class="seg-wrap">
+        <button type="button" class="seg" data-preset="range" aria-pressed="false" aria-expanded="false" aria-controls="date-popover" id="pick-dates">Pick dates</button>
+        <form class="popover date-popover" id="date-popover" hidden>
+          <label>From <input type="date" id="date-from" required></label>
+          <label>To <input type="date" id="date-to" required></label>
+          <button class="btn-primary" type="submit">Show events</button>
+        </form>
+      </div>
+    </div>
+
+    <button class="btn-outline saved-button" id="saved-button" type="button" aria-pressed="false">
+      <svg class="i heart filled" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/></svg>
+      Saved <span class="badge" id="saved-count">0</span>
+    </button>
+  </header>
+
+  <!-- ============ Main ============ -->
+  <main class="layout">
+    <div id="map" class="map" aria-label="Map of events"></div>
+
+    <!-- Active filters bar (over the map) -->
+    <div class="filter-bar" id="filter-bar" hidden aria-live="polite"></div>
+
+    <!-- Map controls -->
+    <div class="map-controls">
+      <button type="button" class="ctrl" id="locate" aria-label="Show my location">
+        <svg class="i accent" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7.5"/></svg>
+      </button>
+      <div class="ctrl-group">
+        <button type="button" class="ctrl" id="zoom-in" aria-label="Zoom in"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button type="button" class="ctrl" id="zoom-out" aria-label="Zoom out"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+      </div>
+    </div>
+
+    <!-- Results panel -->
+    <aside class="panel" aria-labelledby="panel-title">
+      <div class="panel-head">
+        <div class="panel-title-row">
+          <div>
+            <h1 class="panel-title" id="panel-title">Events</h1>
+            <p class="panel-sub" id="panel-sub"></p>
+          </div>
+          <div class="filters-wrap">
+            <button type="button" class="btn-outline small" id="filters-button" aria-expanded="false" aria-controls="filters-popover">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+              Filters <span class="dot-indicator" id="filters-dot" hidden></span>
+            </button>
+            <div class="popover filters-popover" id="filters-popover" hidden>
+              <label class="check"><input type="checkbox" id="free-only"> Free events only</label>
+              <p class="menu-heading">Time of day</p>
+              <div class="tod" role="group" aria-label="Time of day">
+                <label class="check"><input type="checkbox" value="morning" name="tod"> Morning <small>before noon</small></label>
+                <label class="check"><input type="checkbox" value="afternoon" name="tod"> Afternoon <small>12 – 5 PM</small></label>
+                <label class="check"><input type="checkbox" value="evening" name="tod"> Evening <small>after 5 PM</small></label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="chips" id="chips" role="group" aria-label="Categories"></div>
+      </div>
+      <ul class="event-list" id="event-list" aria-live="polite" tabindex="-1"></ul>
+    </aside>
+
+    <!-- Event details drawer -->
+    <section class="drawer" id="drawer" aria-labelledby="drawer-title" hidden></section>
+  </main>
+
+  <!-- Hover preview card (positioned over the map) -->
+  <div class="hover-card" id="hover-card" role="dialog" aria-label="Event preview" hidden></div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/time.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
